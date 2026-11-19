@@ -38,21 +38,40 @@ jobs:
           EOF
 
           SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          ANDROID_JAR=$(ls -d "$SDK"/platforms/android-*/android.jar 2>/dev/null | sort -V | tail -n 1)
-          BUILD_TOOLS=$(ls -d "$SDK"/build-tools/* 2>/dev/null | sort -V | tail -n 1)
+          if [ -f "$SDK/platforms/android-34/android.jar" ]; then
+            ANDROID_JAR="$SDK/platforms/android-34/android.jar"
+          elif [ -f "$SDK/platforms/android-35/android.jar" ]; then
+            ANDROID_JAR="$SDK/platforms/android-35/android.jar"
+          else
+            ANDROID_JAR=$(ls -d "$SDK"/platforms/android-*/android.jar 2>/dev/null | sort -V | tail -n 1)
+          fi
+
+          if [ -d "$SDK/build-tools/34.0.0" ]; then
+            BUILD_TOOLS="$SDK/build-tools/34.0.0"
+          elif [ -d "$SDK/build-tools/35.0.0" ]; then
+            BUILD_TOOLS="$SDK/build-tools/35.0.0"
+          else
+            BUILD_TOOLS=$(ls -d "$SDK"/build-tools/* 2>/dev/null | sort -V | tail -n 1)
+          fi
+
+          echo "Using $ANDROID_JAR and $BUILD_TOOLS"
+          ls -la src/com/notes/app/
 
           "$BUILD_TOOLS/aapt2" compile --dir res -o res.zip
           "$BUILD_TOOLS/aapt2" link -o unsigned.apk -I "$ANDROID_JAR" \
             --manifest AndroidManifest.xml --min-sdk-version 26 --target-sdk-version 34 \
-            --version-code 1 --version-name "1.0" res.zip
+            --version-code 2 --version-name "1.1" res.zip
 
           javac -encoding UTF-8 -source 1.8 -target 1.8 -classpath "$ANDROID_JAR" \
             -d obj src/com/notes/app/*.java
 
+          test -f obj/com/notes/app/MainActivity.class || { echo "ERROR: MainActivity.class missing!"; exit 1; }
+          test -f obj/com/notes/app/EditorActivity.class || { echo "ERROR: EditorActivity.class missing!"; exit 1; }
+
           find obj -name "*.class" -print0 | xargs -0 "$BUILD_TOOLS/d8" \
             --min-api 26 --lib "$ANDROID_JAR" --output dex
 
-          zip -j unsigned.apk dex/classes.dex
+          zip -j -0 unsigned.apk dex/classes.dex
           "$BUILD_TOOLS/zipalign" -f -p 4 unsigned.apk aligned.apk
 
           keytool -genkeypair -v -keystore notes.keystore -alias notes \
