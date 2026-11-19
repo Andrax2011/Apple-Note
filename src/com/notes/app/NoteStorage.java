@@ -1,217 +1,131 @@
 package com.notes.app;
 
+import android.app.Activity;
 import android.content.Context;
+import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
+import android.content.res.Configuration;
+import android.graphics.Color;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
+import android.os.Build;
+import android.view.View;
+import android.view.Window;
+import android.view.WindowInsetsController;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
+public class Theme {
 
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.nio.charset.StandardCharsets;
-import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Calendar;
-import java.util.Collections;
-import java.util.Date;
-import java.util.List;
-import java.util.Locale;
-import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+    public final boolean dark;
+    public final int bg;
+    public final int card;
+    public final int searchBg;
+    public final int barBg;
+    public final int divider;
+    public final int textPrimary;
+    public final int textSecondary;
+    public final int textHint;
+    public final int accent;
+    public final int danger;
+    public final int ripple;
 
-public class NoteStorage {
-
-    public static class Note {
-        public String id;
-        public String title;
-        public String body;
-        public long updatedAt;
-        public boolean pinned;
-
-        public Note(String id, String title, String body, long updatedAt, boolean pinned) {
-            this.id = id;
-            this.title = title != null ? title : "";
-            this.body = body != null ? body : "";
-            this.updatedAt = updatedAt;
-            this.pinned = pinned;
-        }
-
-        public String displayTitle() {
-            String t = title.trim();
-            if (!t.isEmpty()) return t;
-            String b = body.trim();
-            if (!b.isEmpty()) {
-                int nl = b.indexOf('\n');
-                return nl > 0 ? b.substring(0, nl).trim() : b;
-            }
-            return "Новая заметка";
-        }
-
-        public String displayPreview() {
-            String t = title.trim();
-            String b = body.trim();
-            if (!t.isEmpty()) {
-                return b.isEmpty() ? "Нет дополнительного текста" : b.replace('\n', ' ');
-            }
-            if (!b.isEmpty()) {
-                int nl = b.indexOf('\n');
-                if (nl > 0 && nl + 1 < b.length()) {
-                    return b.substring(nl + 1).trim().replace('\n', ' ');
-                }
-            }
-            return "Нет дополнительного текста";
+    private Theme(boolean dark) {
+        this.dark = dark;
+        if (dark) {
+            bg            = Color.parseColor("#000000");
+            card          = Color.parseColor("#1C1C1E");
+            searchBg      = Color.parseColor("#1C1C1E");
+            barBg         = Color.parseColor("#121214");
+            divider       = Color.parseColor("#2C2C2E");
+            textPrimary   = Color.parseColor("#FFFFFF");
+            textSecondary = Color.parseColor("#8E8E93");
+            textHint      = Color.parseColor("#636366");
+            accent        = Color.parseColor("#FFD60A");
+            danger        = Color.parseColor("#FF453A");
+            ripple        = Color.parseColor("#28FFFFFF");
+        } else {
+            bg            = Color.parseColor("#F2F2F7");
+            card          = Color.parseColor("#FFFFFF");
+            searchBg      = Color.parseColor("#E5E5EA");
+            barBg         = Color.parseColor("#F9F9FB");
+            divider       = Color.parseColor("#DCDCE0");
+            textPrimary   = Color.parseColor("#000000");
+            textSecondary = Color.parseColor("#6C6C70");
+            textHint      = Color.parseColor("#8E8E93");
+            accent        = Color.parseColor("#C98A00");
+            danger        = Color.parseColor("#FF3B30");
+            ripple        = Color.parseColor("#18000000");
         }
     }
 
-    private static final String FILE_NAME = "notes_v1.json";
-    private static final ExecutorService IO = Executors.newSingleThreadExecutor();
-    private static List<Note> cache = null;
-
-    public static synchronized List<Note> getAll(Context ctx) {
-        if (cache == null) {
-            cache = loadFromDisk(ctx.getApplicationContext());
+    public static Theme of(Context ctx) {
+        SharedPreferences prefs = ctx.getSharedPreferences("notes_ui", Context.MODE_PRIVATE);
+        int mode = prefs.getInt("theme_mode", 0);
+        boolean isDark;
+        if (mode == 1) {
+            isDark = true;
+        } else if (mode == 2) {
+            isDark = false;
+        } else {
+            int night = ctx.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+            isDark = (night == Configuration.UI_MODE_NIGHT_YES);
         }
-        sort(cache);
-        return new ArrayList<Note>(cache);
+        return new Theme(isDark);
     }
 
-    public static synchronized Note findById(Context ctx, String id) {
-        if (id == null) return null;
-        for (Note n : getAll(ctx)) {
-            if (id.equals(n.id)) return n;
-        }
-        return null;
+    public static void toggle(Context ctx) {
+        boolean currentlyDark = of(ctx).dark;
+        ctx.getSharedPreferences("notes_ui", Context.MODE_PRIVATE)
+                .edit()
+                .putInt("theme_mode", currentlyDark ? 2 : 1)
+                .apply();
     }
 
-    public static synchronized Note createDraft() {
-        return new Note(UUID.randomUUID().toString(), "", "", System.currentTimeMillis(), false);
-    }
-
-    public static synchronized void upsert(Context ctx, Note note) {
-        if (cache == null) cache = loadFromDisk(ctx.getApplicationContext());
-        boolean updated = false;
-        for (int i = 0; i < cache.size(); i++) {
-            if (cache.get(i).id.equals(note.id)) {
-                cache.set(i, note);
-                updated = true;
-                break;
-            }
-        }
-        if (!updated) cache.add(note);
-        sort(cache);
-        persistAsync(ctx.getApplicationContext());
-    }
-
-    public static synchronized void delete(Context ctx, String id) {
-        if (cache == null) cache = loadFromDisk(ctx.getApplicationContext());
-        for (int i = 0; i < cache.size(); i++) {
-            if (cache.get(i).id.equals(id)) {
-                cache.remove(i);
-                break;
-            }
-        }
-        persistAsync(ctx.getApplicationContext());
-    }
-
-    public static synchronized void togglePin(Context ctx, String id) {
-        if (cache == null) cache = loadFromDisk(ctx.getApplicationContext());
-        for (Note n : cache) {
-            if (n.id.equals(id)) {
-                n.pinned = !n.pinned;
-                break;
-            }
-        }
-        sort(cache);
-        persistAsync(ctx.getApplicationContext());
-    }
-
-    private static void sort(List<Note> list) {
-        Collections.sort(list, (a, b) -> {
-            if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
-            return Long.compare(b.updatedAt, a.updatedAt);
-        });
-    }
-
-    private static void persistAsync(Context appCtx) {
-        JSONArray arr = new JSONArray();
+    @SuppressWarnings("deprecation")
+    public void applySystemBars(Activity activity) {
         try {
-            for (Note n : cache) {
-                JSONObject o = new JSONObject();
-                o.put("id", n.id);
-                o.put("title", n.title);
-                o.put("body", n.body);
-                o.put("updatedAt", n.updatedAt);
-                o.put("pinned", n.pinned);
-                arr.put(o);
-            }
-        } catch (Exception ignored) {
-            return;
-        }
-        final byte[] data = arr.toString().getBytes(StandardCharsets.UTF_8);
-        IO.execute(() -> {
-            File tmp = new File(appCtx.getFilesDir(), FILE_NAME + ".tmp");
-            File target = new File(appCtx.getFilesDir(), FILE_NAME);
-            try (FileOutputStream fos = new FileOutputStream(tmp)) {
-                fos.write(data);
-                fos.flush();
-            } catch (Exception ignored) {
-                return;
-            }
-            tmp.renameTo(target);
-        });
+            Window w = activity.getWindow();
+            w.setStatusBarColor(bg);
+            w.setNavigationBarColor(barBg);
+            w.getDecorView().post(() -> {
+                try {
+                    if (Build.VERSION.SDK_INT >= 30) {
+                        WindowInsetsController ctrl = w.getInsetsController();
+                        if (ctrl != null) {
+                            int mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                                    | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                            ctrl.setSystemBarsAppearance(dark ? 0 : mask, mask);
+                        }
+                    } else {
+                        int flags = dark ? 0
+                                : (View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+                        w.getDecorView().setSystemUiVisibility(flags);
+                    }
+                } catch (Throwable ignored) {}
+            });
+        } catch (Throwable ignored) {}
     }
 
-    private static List<Note> loadFromDisk(Context appCtx) {
-        List<Note> list = new ArrayList<Note>();
-        File file = new File(appCtx.getFilesDir(), FILE_NAME);
-        if (!file.exists()) return list;
-        try (FileInputStream fis = new FileInputStream(file);
-             ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
-            byte[] buf = new byte[4096];
-            int read;
-            while ((read = fis.read(buf)) != -1) bos.write(buf, 0, read);
-            String json = new String(bos.toByteArray(), StandardCharsets.UTF_8);
-            JSONArray arr = new JSONArray(json);
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject o = arr.getJSONObject(i);
-                list.add(new Note(
-                        o.optString("id", UUID.randomUUID().toString()),
-                        o.optString("title", ""),
-                        o.optString("body", ""),
-                        o.optLong("updatedAt", System.currentTimeMillis()),
-                        o.optBoolean("pinned", false)
-                ));
-            }
-        } catch (Exception ignored) {
-        }
-        return list;
+    public int dialogTheme() {
+        return dark
+                ? android.R.style.Theme_Material_Dialog_Alert
+                : android.R.style.Theme_Material_Light_Dialog_Alert;
     }
 
-    public static String formatDate(long ts) {
-        Calendar now = Calendar.getInstance();
-        Calendar then = Calendar.getInstance();
-        then.setTimeInMillis(ts);
-        Locale ru = new Locale("ru");
-        if (now.get(Calendar.YEAR) == then.get(Calendar.YEAR)
-                && now.get(Calendar.DAY_OF_YEAR) == then.get(Calendar.DAY_OF_YEAR)) {
-            return new SimpleDateFormat("HH:mm", ru).format(new Date(ts));
-        }
-        now.add(Calendar.DAY_OF_YEAR, -1);
-        if (now.get(Calendar.YEAR) == then.get(Calendar.YEAR)
-                && now.get(Calendar.DAY_OF_YEAR) == then.get(Calendar.DAY_OF_YEAR)) {
-            return "Вчера";
-        }
-        return new SimpleDateFormat("d MMM", ru).format(new Date(ts));
+    public static int dp(Context ctx, int dp) {
+        return Math.round(dp * ctx.getResources().getDisplayMetrics().density);
     }
 
-    public static String formatCount(int count) {
-        int n = Math.abs(count) % 100;
-        int n1 = n % 10;
-        if (n > 10 && n < 20) return count + " заметок";
-        if (n1 == 1) return count + " заметка";
-        if (n1 >= 2 && n1 <= 4) return count + " заметки";
-        return count + " заметок";
+    public static GradientDrawable rounded(int color, float radiusPx) {
+        GradientDrawable gd = new GradientDrawable();
+        gd.setColor(color);
+        gd.setCornerRadius(radiusPx);
+        return gd;
+    }
+
+    public static Drawable rippleRounded(int color, int rippleColor, float radiusPx) {
+        GradientDrawable content = rounded(color, radiusPx);
+        GradientDrawable mask = rounded(Color.WHITE, radiusPx);
+        return new RippleDrawable(ColorStateList.valueOf(rippleColor), content, mask);
     }
 }
